@@ -20,6 +20,8 @@ FAKE_CONTAINERS = [
         "created_at": None, "started_at": None, "finished_at": None, "uptime_seconds": 120,
         "ports": [], "stack": "blog", "service": "web", "restart_policy": "unless-stopped",
         "networks": ["blog_default"], "is_self": False, "stats": {},
+        "compose_workdir": "/srv/blog",
+        "compose_files": ["/srv/blog/docker-compose.yml"],
     },
     {
         "id": "b" * 64, "short_id": "b" * 12, "name": "db", "image": "postgres:16",
@@ -27,6 +29,8 @@ FAKE_CONTAINERS = [
         "created_at": None, "started_at": None, "finished_at": None, "uptime_seconds": None,
         "ports": [], "stack": "blog", "service": "db", "restart_policy": "no",
         "networks": ["blog_default"], "is_self": False, "stats": {},
+        "compose_workdir": "/srv/blog",
+        "compose_files": ["/srv/blog/docker-compose.yml"],
     },
 ]
 

@@ -72,6 +72,22 @@ class CategoryMember(Base):
     category: Mapped[Category] = relationship(back_populates="members")
 
 
+class ComposeProject(Base):
+    """Registro dei progetti compose visti almeno una volta.
+
+    Serve perché `compose down` rimuove i container e con essi le label da cui
+    si ricava dove sta il file compose: senza questo registro uno stack spento
+    non sarebbe più ricreabile dal pannello."""
+
+    __tablename__ = "compose_projects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    working_dir: Mapped[str] = mapped_column(String(1024), default="")
+    config_files: Mapped[list] = mapped_column(JSON, default=list)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Schedule(Base):
     __tablename__ = "schedules"
 

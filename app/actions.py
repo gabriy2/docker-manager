@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from . import docker_service as ds
+from . import stacks
 from .config import settings
 from .models import ActivityLog, Category
 
@@ -93,7 +94,7 @@ def execute(
 
     try:
         if target_kind == "stack" and action in {"up", "down"}:
-            result = ds.stack_action(target_ref, action)
+            result = ds.stack_action(target_ref, action, stacks.context(db, target_ref))
             result["targets"] = [target_ref]
         else:
             names = resolve_targets(db, target_kind, target_ref, targets)

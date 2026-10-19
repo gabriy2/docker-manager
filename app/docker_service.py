@@ -284,6 +284,8 @@ def serialize(container, *, with_stats: bool = True) -> dict:
         "ports": _ports(attrs),
         "stack": labels.get(LABEL_PROJECT) or None,
         "service": labels.get(LABEL_SERVICE) or None,
+        "compose_workdir": labels.get(LABEL_WORKDIR) or "",
+        "compose_files": [f for f in (labels.get(LABEL_CONFIG_FILES) or "").split(",") if f],
         "restart_policy": ((attrs.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name") or "no",
         "networks": sorted((attrs.get("NetworkSettings") or {}).get("Networks", {}).keys()),
         "is_self": bool(SELF_ID) and container.id.startswith(SELF_ID),
@@ -431,10 +433,15 @@ def list_stacks() -> list[dict]:
 
 
 def _compose_context(project: str) -> tuple[str, list[str]]:
+    """Ricava dalle label di un container dello stack dove si trova il file
+    compose. Funziona solo se lo stack ha ancora almeno un container: dopo un
+    `down` il contesto arriva dal registro su database (vedi app/stacks.py)."""
     client = get_client()
     containers = client.containers.list(all=True, filters={"label": f"{LABEL_PROJECT}={project}"})
     if not containers:
-        raise ActionError(f"stack '{project}' non trovato")
+        raise ActionError(
+            f"stack '{project}' non trovato: nessun container e nessun percorso compose memorizzato"
+        )
     labels = (containers[0].attrs.get("Config") or {}).get("Labels") or {}
     workdir = labels.get(LABEL_WORKDIR) or ""
     files = [f for f in (labels.get(LABEL_CONFIG_FILES) or "").split(",") if f]
@@ -447,9 +454,16 @@ def compose_cli_available() -> bool:
     return shutil.which("docker") is not None
 
 
-def compose_action(project: str, action: str) -> dict:
+def compose_action(
+    project: str,
+    action: str,
+    context: tuple[str, list[str]] | None = None,
+) -> dict:
     """`up -d` / `down` reali via CLI compose. Richiede COMPOSE_CLI=true e il
-    file compose raggiungibile dentro al container (volume montato)."""
+    file compose raggiungibile dentro al container (volume montato).
+
+    `context` è la coppia (working_dir, config_files) presa dal registro degli
+    stack; se manca si ripiega sulle label dei container ancora esistenti."""
     if action not in {"up", "down"}:
         raise ActionError(f"azione stack '{action}' non supportata")
     if not compose_cli_available():
@@ -457,7 +471,7 @@ def compose_action(project: str, action: str) -> dict:
             "operazioni compose up/down disattivate: imposta COMPOSE_CLI=true e monta "
             "le directory dei progetti compose nel container"
         )
-    workdir, files = _compose_context(project)
+    workdir, files = context if context and context[0] else _compose_context(project)
     if not workdir or not os.path.isdir(workdir):
         raise ActionError(
             f"la directory del progetto '{workdir or '?'}' non è visibile dentro il container; "
@@ -480,9 +494,13 @@ def compose_action(project: str, action: str) -> dict:
     }
 
 
-def stack_action(project: str, action: str) -> dict:
+def stack_action(
+    project: str,
+    action: str,
+    context: tuple[str, list[str]] | None = None,
+) -> dict:
     if action in {"up", "down"}:
-        return compose_action(project, action)
+        return compose_action(project, action, context)
     stacks = {s["name"]: s for s in list_stacks()}
     if project not in stacks:
         raise ActionError(f"stack '{project}' non trovato")

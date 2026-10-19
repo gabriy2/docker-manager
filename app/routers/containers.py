@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import actions as act
 from .. import docker_service as ds
+from .. import stacks
 from ..auth import require_user
 from ..db import get_db
 from ..models import Category
@@ -55,7 +56,7 @@ def categories_payload(db: Session, containers: list[dict]) -> list[dict]:
     return out
 
 
-def stacks_payload(containers: list[dict]) -> list[dict]:
+def stacks_payload(db: Session, containers: list[dict]) -> list[dict]:
     grouped: dict[str, dict] = {}
     for container in containers:
         key = container["stack"] or "(senza stack)"
@@ -67,12 +68,33 @@ def stacks_payload(containers: list[dict]) -> list[dict]:
                 "containers": [],
                 "running": 0,
                 "total": 0,
+                "removed": False,
+                "can_recreate": False,
             },
         )
         bucket["containers"].append(container["name"])
         bucket["total"] += 1
         if container["state"] == "running":
             bucket["running"] += 1
+
+    # stack già visti ma ora senza container (tipicamente dopo un `compose down`):
+    # restano in elenco così si possono ricreare dal pannello
+    compose_cli = ds.compose_cli_available()
+    for project in stacks.known(db):
+        bucket = grouped.get(project.name)
+        if bucket is None:
+            grouped[project.name] = {
+                "name": project.name,
+                "has_compose": True,
+                "containers": [],
+                "running": 0,
+                "total": 0,
+                "removed": True,
+                "can_recreate": bool(project.working_dir) and compose_cli,
+            }
+        else:
+            bucket["can_recreate"] = bool(project.working_dir) and compose_cli
+
     return sorted(grouped.values(), key=lambda s: (not s["has_compose"], s["name"].lower()))
 
 
@@ -89,6 +111,7 @@ def overview(db: Session = Depends(get_db)) -> dict:
             "counts": {"total": 0, "running": 0, "stopped": 0, "paused": 0, "unhealthy": 0},
         }
     containers = enriched_containers(db)
+    stacks.remember(db, containers)
     counts = {
         "total": len(containers),
         "running": sum(1 for c in containers if c["state"] == "running"),
@@ -100,7 +123,7 @@ def overview(db: Session = Depends(get_db)) -> dict:
         "docker": health,
         "containers": containers,
         "categories": categories_payload(db, containers),
-        "stacks": stacks_payload(containers),
+        "stacks": stacks_payload(db, containers),
         "counts": counts,
     }
 
@@ -145,4 +168,20 @@ def run_action(payload: ActionIn, db: Session = Depends(get_db)) -> dict:
 
 @router.get("/stacks")
 def list_stacks(db: Session = Depends(get_db)) -> list[dict]:
-    return stacks_payload(enriched_containers(db))
+    containers = enriched_containers(db)
+    stacks.remember(db, containers)
+    return stacks_payload(db, containers)
+
+
+@router.delete("/stacks/{name}")
+def forget_stack(name: str, db: Session = Depends(get_db)) -> dict:
+    """Dimentica uno stack rimosso, togliendolo dall'elenco del pannello."""
+    containers = enriched_containers(db)
+    if any(c["stack"] == name for c in containers):
+        raise HTTPException(
+            status_code=409,
+            detail="lo stack ha ancora dei container: rimuovili prima di dimenticarlo",
+        )
+    stacks.forget(db, name)
+    act.record_activity(db, source="ui", action="stack.forget", target=name, status="ok", message="")
+    return {"stacks": stacks_payload(db, containers)}

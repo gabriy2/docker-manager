@@ -144,6 +144,11 @@ volumes:
 
 Se la cartella del progetto non è montata, il pannello lo dice chiaramente invece di fallire a metà.
 
+Gli stack visti almeno una volta vengono memorizzati: dopo un `compose down` lo stack resta
+in elenco, marcato come *rimosso*, con il pulsante **compose up** per ricrearlo (`compose down`
+cancella i container e con essi le label da cui si ricava dove sta il file compose). Se uno stack
+non ti serve più, il pulsante **Dimentica** lo toglie dall'elenco senza toccare nulla sull'host.
+
 ## Sicurezza
 
 Montare `/var/run/docker.sock` dà al container il controllo completo del daemon Docker:

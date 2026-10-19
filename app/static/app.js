@@ -271,23 +271,27 @@ function renderSidebar() {
 
   $("#side-stacks").innerHTML = state.stacks.length
     ? state.stacks.map((stack) => sideRow({
-        kind: "stack", ref: stack.name, icon: null, color: stack.has_compose ? "#0ea5e9" : "#64748b",
+        kind: "stack", ref: stack.name, icon: null,
+        color: stack.removed ? "#ef4444" : stack.has_compose ? "#0ea5e9" : "#64748b",
         name: stack.name, running: stack.running, total: stack.total,
+        removed: stack.removed, canRecreate: stack.can_recreate,
       })).join("")
     : `<div class="muted" style="padding:6px 8px">Nessuno stack rilevato.</div>`;
 }
 
-function sideRow({ kind, ref, icon: emoji, color, name, running, total }) {
+function sideRow({ kind, ref, icon: emoji, color, name, running, total, removed, canRecreate }) {
   const active = state.filter && state.filter.kind === kind && state.filter.ref === ref;
+  const acts = removed
+    ? `${canRecreate ? `<button class="mini-btn go" title="Ricrea lo stack (compose up)" data-act="group-action" data-kind="stack" data-ref="${esc(ref)}" data-action="up">${icon("bolt")}</button>` : ""}
+       <button class="mini-btn halt" title="Dimentica questo stack" data-act="forget-stack" data-ref="${esc(ref)}">${icon("trash")}</button>`
+    : `<button class="mini-btn go" title="Avvia tutti" data-act="group-action" data-kind="${kind}" data-ref="${esc(ref)}" data-action="start">${icon("play")}</button>
+       <button class="mini-btn halt" title="Ferma tutti" data-act="group-action" data-kind="${kind}" data-ref="${esc(ref)}" data-action="stop">${icon("stop")}</button>
+       <button class="mini-btn" title="Pianifica" data-act="schedule-for" data-kind="${kind}" data-ref="${esc(ref)}">${icon("clock")}</button>`;
   return `<div class="side-row ${active ? "is-active" : ""}" data-act="filter" data-kind="${kind}" data-ref="${esc(ref)}" role="button" tabindex="0">
     ${emoji ? `<span style="font-size:13px">${esc(emoji)}</span>` : `<span class="swatch" style="background:${esc(color)};color:${esc(color)}"></span>`}
-    <span class="side-name" title="${esc(name)}">${esc(name)}</span>
-    <span class="side-meta">${running}/${total}</span>
-    <span class="mini-acts">
-      <button class="mini-btn go" title="Avvia tutti" data-act="group-action" data-kind="${kind}" data-ref="${esc(ref)}" data-action="start">${icon("play")}</button>
-      <button class="mini-btn halt" title="Ferma tutti" data-act="group-action" data-kind="${kind}" data-ref="${esc(ref)}" data-action="stop">${icon("stop")}</button>
-      <button class="mini-btn" title="Pianifica" data-act="schedule-for" data-kind="${kind}" data-ref="${esc(ref)}">${icon("clock")}</button>
-    </span>
+    <span class="side-name" title="${esc(name)}${removed ? " — rimosso" : ""}">${esc(name)}</span>
+    <span class="side-meta">${removed ? "rimosso" : `${running}/${total}`}</span>
+    <span class="mini-acts">${acts}</span>
   </div>`;
 }
 
@@ -333,14 +337,23 @@ function renderContainers() {
       esc(state.docker.error || "Verifica che /var/run/docker.sock sia montato nel container."));
     return;
   }
-  if (!items.length) {
+  // stack rimossi con "compose down": visibili nel raggruppamento per stack
+  // e quando si filtra proprio su quello stack
+  const removedPinned = state.filter?.kind === "stack"
+    ? state.stacks.filter((s) => s.removed && s.name === state.filter.ref)
+    : [];
+
+  if (!items.length && state.group !== "stack" && !removedPinned.length) {
     root.innerHTML = emptyState("box", "Nessun container",
       state.containers.length ? "Nessun risultato per i filtri attivi." : "Non ci sono container su questo host.");
     return;
   }
 
   if (state.group === "none") {
-    root.innerHTML = `<div class="rows">${items.map(containerRow).join("")}</div>`;
+    const panels = removedPinned.map((s) => removedStackSection({
+      title: s.name, ref: s.name, color: "#ef4444", canRecreate: s.can_recreate,
+    })).join("");
+    root.innerHTML = panels + `<div class="rows">${items.map(containerRow).join("")}</div>`;
     return;
   }
 
@@ -358,16 +371,21 @@ function renderContainers() {
   } else {
     for (const stack of state.stacks) {
       const members = items.filter((c) => (c.stack || "(senza stack)") === stack.name);
-      if (members.length) groups.push({
-        title: stack.name, color: stack.has_compose ? "#0ea5e9" : "#64748b",
+      // gli stack rimossi con "compose down" restano visibili per poterli ricreare
+      if (!members.length && !stack.removed) continue;
+      groups.push({
+        title: stack.name,
+        color: stack.removed ? "#ef4444" : stack.has_compose ? "#0ea5e9" : "#64748b",
         kind: "stack", ref: stack.name, members, compose: stack.has_compose,
+        removed: stack.removed, canRecreate: stack.can_recreate,
       });
     }
   }
 
   root.innerHTML = groups.map((g) => {
     const running = g.members.filter((c) => c.state === "running").length;
-    const composeBtns = g.compose && state.meta.compose_cli ? `
+    if (g.removed) return removedStackSection(g);
+    const composeBtns = g.compose && g.canRecreate ? `
       <button class="btn btn-sm btn-ghost" data-act="group-action" data-kind="stack" data-ref="${esc(g.ref)}" data-action="up">compose up</button>
       <button class="btn btn-sm btn-ghost" data-act="group-action" data-kind="stack" data-ref="${esc(g.ref)}" data-action="down">compose down</button>` : "";
     const acts = g.kind ? `
@@ -386,6 +404,27 @@ function renderContainers() {
       <div class="rows">${g.members.map(containerRow).join("")}</div>
     </section>`;
   }).join("");
+}
+
+function removedStackSection({ title, ref, color, canRecreate }) {
+  return `<section>
+    <div class="group-head">
+      <div class="group-title"><span class="swatch" style="background:${esc(color || "#ef4444")}"></span>${esc(title)}</div>
+      <div class="group-meta">rimosso</div>
+      <div class="group-acts">
+        ${canRecreate
+          ? `<button class="btn btn-sm btn-ok" data-act="group-action" data-kind="stack" data-ref="${esc(ref)}" data-action="up">${icon("bolt")}compose up</button>`
+          : ""}
+        <button class="btn btn-sm btn-danger" data-act="forget-stack" data-ref="${esc(ref)}">${icon("trash")}Dimentica</button>
+      </div>
+    </div>
+    <div class="panel"><div class="empty" style="padding:22px">
+      <div>Nessun container: lo stack è stato rimosso con <code>compose down</code>.</div>
+      <div class="muted">${canRecreate
+        ? "Usa <b>compose up</b> per ricrearlo dal file compose."
+        : "Per ricrearlo serve <code>COMPOSE_CLI=true</code> e la cartella del progetto montata nel container."}</div>
+    </div></div>
+  </section>`;
 }
 
 function emptyState(ic, title, text) {
@@ -1245,6 +1284,23 @@ document.addEventListener("click", async (ev) => {
       await doAction({ action, target_kind: kind, target_ref: ref, label });
       break;
     }
+
+    case "forget-stack":
+      confirmModal({
+        title: "Dimenticare lo stack?",
+        text: `“${esc(ref)}” verrà tolto dall'elenco. Non potrai più ricrearlo dal pannello,
+               ma i file compose sull'host restano intatti.`,
+        confirmLabel: "Dimentica",
+        async onConfirm() {
+          try {
+            await api(`/api/stacks/${encodeURIComponent(ref)}`, { method: "DELETE" });
+            if (state.filter?.kind === "stack" && state.filter.ref === ref) state.filter = null;
+            toast("ok", "Stack dimenticato", ref);
+            await refresh();
+          } catch (err) { toast("err", "Operazione non riuscita", err.message); }
+        },
+      });
+      break;
 
     case "open-container":
       openContainerModal(name); break;
