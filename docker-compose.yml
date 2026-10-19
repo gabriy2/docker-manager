@@ -1,0 +1,49 @@
+services:
+  docker-manager:
+    # Immagine pubblicata dal workflow GitHub Actions:
+    #   image: ghcr.io/<utente>/docker-manager:latest
+    # In locale puoi costruirla direttamente:
+    build: .
+    image: docker-manager:latest
+    container_name: docker-manager
+    restart: unless-stopped
+    ports:
+      - "8420:8000"
+    environment:
+      TZ: Europe/Rome                 # fuso orario usato dalle pianificazioni
+      # AUTH_USER: admin              # decommenta entrambe per proteggere l'interfaccia
+      # AUTH_PASSWORD: cambiami
+      ENABLE_STATS: "true"            # metriche CPU/RAM live
+      STATS_INTERVAL: "8"
+      STOP_TIMEOUT: "10"              # secondi di grazia prima del SIGKILL
+      COMPOSE_CLI: "false"            # true = abilita "compose up/down" sugli stack
+      HIDE_SELF: "false"              # true = nascondi questo container dall'elenco
+      LOG_RETENTION: "500"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - docker-manager-data:/data
+      # Per usare COMPOSE_CLI=true monta le cartelle dei tuoi progetti compose
+      # con lo STESSO percorso che hanno sull'host, per esempio:
+      # - /opt/stacks:/opt/stacks:ro
+    labels:
+      - "com.docker.compose.project=infra"
+
+  # Aggiornamento automatico dell'immagine una volta a settimana (facoltativo).
+  # Avvialo con:  docker compose --profile autoupdate up -d
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: docker-manager-watchtower
+    profiles: ["autoupdate"]
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Rome
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+      # ogni lunedì alle 04:30 (formato: sec min ora giorno mese giorno-settimana)
+      WATCHTOWER_SCHEDULE: "0 30 4 * * 1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: docker-manager
+
+volumes:
+  docker-manager-data:

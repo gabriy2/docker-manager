@@ -1,0 +1,76 @@
+name: Aggiornamento settimanale
+
+# Ogni lunedì alle 04:00 UTC:
+#  1. aggiorna le dipendenze Python e le versioni di docker CLI/compose, verifica
+#     che lint e test passino e apre (o aggiorna) una pull request;
+#  2. in ogni caso ricostruisce e ripubblica l'immagine, così da incorporare le
+#     patch di sicurezza dell'immagine base anche quando le dipendenze non cambiano.
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      solo_rebuild:
+        description: "Salta l'aggiornamento delle dipendenze e ricostruisci soltanto l'immagine"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  dipendenze:
+    name: Aggiorna dipendenze e apri PR
+    if: ${{ !inputs.solo_rebuild }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cerca versioni più recenti
+        id: bump
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/bump_versions.py
+
+      - name: Verifica che tutto funzioni ancora
+        if: steps.bump.outputs.has_changes == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          ruff check .
+          pytest -q
+
+      - name: Prova a costruire l'immagine aggiornata
+        if: steps.bump.outputs.has_changes == 'true'
+        run: docker build -t docker-manager:weekly .
+
+      - name: Apri la pull request
+        if: steps.bump.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/aggiornamento-settimanale
+          delete-branch: true
+          commit-message: "chore: aggiornamento settimanale delle dipendenze"
+          title: "chore: aggiornamento settimanale delle dipendenze"
+          labels: dipendenze, automatico
+          body: |
+            Aggiornamento automatico eseguito dal workflow **Aggiornamento settimanale**.
+
+            ${{ steps.bump.outputs.changes }}
+
+            Lint, test e build dell'immagine sono già stati verificati su questo branch.
+
+  immagine:
+    name: Ricostruisci e ripubblica l'immagine
+    uses: ./.github/workflows/publish.yml
+    permissions:
+      contents: read
+      packages: write

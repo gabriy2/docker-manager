@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint e test (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Installa dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+
+  image:
+    name: Build immagine e prova di avvio
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build immagine (solo amd64, caricata in locale)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: docker-manager:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Avvia il container contro il Docker del runner
+        run: |
+          docker run -d --name dm-ci -p 8000:8000 \
+            -e TZ=Europe/Rome \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            docker-manager:ci
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/api/health > /dev/null; then break; fi
+            sleep 1
+          done
+
+      - name: Verifica le API principali
+        run: |
+          set -eux
+          curl -fsS http://localhost:8000/api/health | grep -q '"ok":true'
+          curl -fsS http://localhost:8000/api/meta   | grep -q '"version"'
+          curl -fsS http://localhost:8000/api/overview | grep -q '"containers"'
+          curl -fsS http://localhost:8000/ | grep -q "Docker Manager"
+          curl -fsS -o /dev/null http://localhost:8000/static/app.js
+          curl -fsS -o /dev/null http://localhost:8000/static/styles.css
+
+      - name: Crea una categoria e una pianificazione via API
+        run: |
+          set -eux
+          curl -fsS -X POST http://localhost:8000/api/categories \
+            -H 'content-type: application/json' \
+            -d '{"name":"CI","containers":["dm-ci"]}' | grep -q '"id"'
+          curl -fsS -X POST http://localhost:8000/api/schedules \
+            -H 'content-type: application/json' \
+            -d '{"name":"CI","action":"restart","target_kind":"category","target_ref":"1","trigger_kind":"cron","cron_expr":"0 4 * * *"}' \
+            | grep -q '"next_run"'
+
+      - name: Log del container in caso di errore
+        if: failure()
+        run: docker logs dm-ci
+
+      - name: Pulizia
+        if: always()
+        run: docker rm -f dm-ci || true
