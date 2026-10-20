@@ -41,7 +41,17 @@ jobs:
         run: ruff check .
 
       - name: Test
-        run: pytest -q
+        run: |
+          set -o pipefail
+          if ! pytest -q --tb=short 2>&1 | tee /tmp/pytest.log; then
+            # I log del job richiedono un token per essere letti: pubblichiamo
+            # le righe di fallimento come annotazioni, che restano visibili
+            # nella scheda Checks e nell'API anche senza quell'accesso.
+            grep -E '^(FAILED|ERROR)|^E ' /tmp/pytest.log | head -25 | while IFS= read -r riga; do
+              echo "::error::$riga"
+            done
+            exit 1
+          fi
 
   image:
     name: Build immagine e prova di avvio
