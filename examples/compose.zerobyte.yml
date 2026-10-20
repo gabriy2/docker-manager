@@ -1,0 +1,72 @@
+# Docker Manager affiancato a ZeroByte (https://zerobyte.app).
+#
+# ZeroByte chiama i due webhook del pannello prima e dopo il backup: il `pre`
+# spegne i container scelti, il `post` li riaccende. Le chiamate restano sulla
+# rete docker interna, quindi non passano dal reverse proxy e il token non
+# esce dalla rete.
+#
+# Prima di avviare, in un file .env accanto a questo:
+#   ZEROBYTE_APP_SECRET=...
+#   DOCKER_MANAGER_PASSWORD=...
+#
+# Poi: Hook di backup -> Nuovo hook -> copia i due URL in ZeroByte
+# (job di backup -> Advanced).
+#
+# ATTENZIONE al bersaglio dell'hook: non usare «Tutti», altrimenti spegneresti
+# anche ZeroByte nel mezzo del suo backup e il `post` non arriverebbe mai.
+# Usa una categoria che lo escluda, oppure scegli i container a mano.
+
+services:
+  zerobyte:
+    image: ghcr.io/nicotsx/zerobyte:latest
+    container_name: zerobyte
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse:/dev/fuse
+    ports:
+      - 4096:4096
+    environment:
+      - TZ=Europe/Rome
+      - BASE_URL=https://zerobyte.pegonetwork.com
+      - APP_SECRET=${ZEROBYTE_APP_SECRET}
+      - WEBHOOK_ALLOWED_ORIGINS=http://docker-manager:8000
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./zerobyte-data:/var/lib/zerobyte
+      - /srv:/volumes
+      - ./repos:/repos
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    networks:
+      - zerobyte
+      - caddy
+
+  docker-manager:
+    image: ghcr.io/gabriy2/docker-manager:latest
+    container_name: docker-manager
+    restart: unless-stopped
+    ports:
+      - 8420:8000
+    environment:
+      - TZ=Europe/Rome
+      - AUTH_USER=admin
+      - AUTH_PASSWORD=${DOCKER_MANAGER_PASSWORD}
+      - HOOK_BASE_URL=http://docker-manager:8000
+      - ENABLE_STATS=true
+      - STOP_TIMEOUT=10
+      - LOG_RETENTION=500
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-manager-data:/data
+    networks:
+      - zerobyte
+      - caddy
+
+networks:
+  zerobyte:
+    name: zerobyte
+  caddy:
+    external: true
