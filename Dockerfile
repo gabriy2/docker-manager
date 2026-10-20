@@ -31,7 +31,7 @@ RUN set -eux; \
 # --------------------------------------------------------------------------- #
 # Stage 2 — dipendenze Python
 # --------------------------------------------------------------------------- #
-FROM python:3.12-slim AS deps
+FROM python:3.14-slim AS deps
 
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 
@@ -43,7 +43,7 @@ RUN python -m venv /opt/venv \
 # --------------------------------------------------------------------------- #
 # Stage 3 — immagine finale
 # --------------------------------------------------------------------------- #
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 LABEL org.opencontainers.image.title="Docker Manager" \
       org.opencontainers.image.description="Avvio, spegnimento, raggruppamento per categorie e pianificazione dei container Docker da interfaccia web" \
