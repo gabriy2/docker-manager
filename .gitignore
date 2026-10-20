@@ -19,3 +19,7 @@ secret.key
 # screenshot e appunti locali
 *.png
 *.jpg
+
+# credenziali locali, mai nel repo
+token.txt
+STATO.md
