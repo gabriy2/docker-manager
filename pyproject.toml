@@ -8,7 +8,10 @@ license = { text = "MIT" }
 [tool.ruff]
 line-length = 110
 target-version = "py312"
-exclude = ["app/static"]
+# extend-exclude e non exclude: quest'ultimo sostituirebbe le esclusioni
+# predefinite di ruff (.venv, .git, __pycache__…) facendogli analizzare
+# anche le dipendenze installate in un virtualenv dentro il progetto
+extend-exclude = ["app/static"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
@@ -20,5 +23,8 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
+# senza questo `pytest` (lo script console) non trova il pacchetto `app`:
+# a differenza di `python -m pytest` non aggiunge la cartella corrente a sys.path
+pythonpath = ["."]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
