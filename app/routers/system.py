@@ -44,10 +44,24 @@ def logout(response: Response) -> dict:
     return {"authenticated": False}
 
 
+def _internal_base_url() -> str:
+    """Indirizzo con cui raggiungere il pannello dall'interno della rete docker.
+
+    È quello che serve a un backup tool affiancato al pannello: l'interfaccia
+    da sola conosce solo l'URL con cui la stai navigando, che dietro a un
+    reverse proxy è quello pubblico."""
+    if settings.hook_base_url:
+        return settings.hook_base_url
+    name = ds.self_name()
+    return f"http://{name}:{settings.port}" if name else ""
+
+
 @router.get("/meta", dependencies=[Depends(auth.require_user)])
 def meta() -> dict:
     return {
         "app_name": settings.app_name,
+        "internal_base_url": _internal_base_url(),
+        "hook_base_url_fixed": bool(settings.hook_base_url),
         "version": APP_VERSION,
         "timezone": settings.timezone_name,
         "actions": ALL_ACTIONS,

@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from . import docker_service as ds
 from .config import settings
 from .db import init_db
-from .routers import categories, containers, schedules, system
+from .routers import categories, containers, hooks, schedules, system
 from .scheduler import manager
 
 logging.basicConfig(
@@ -56,6 +56,8 @@ app.include_router(system.router)
 app.include_router(containers.router)
 app.include_router(categories.router)
 app.include_router(schedules.router)
+app.include_router(hooks.router)
+app.include_router(hooks.public_router)
 
 
 @app.exception_handler(ds.DockerUnavailable)

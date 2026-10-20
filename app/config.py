@@ -33,9 +33,15 @@ class Settings:
 
         # Docker
         self.docker_host: str | None = os.getenv("DOCKER_HOST") or None
+        self.port: int = _env_int("PORT", 8000)
         self.stop_timeout: int = _env_int("STOP_TIMEOUT", 10)
         self.compose_cli: bool = _env_bool("COMPOSE_CLI", False)
         self.hide_self: bool = _env_bool("HIDE_SELF", False)
+
+        # URL mostrato nell'interfaccia per i webhook di backup. Serve quando il
+        # pannello sta dietro un reverse proxy ma il backup tool lo raggiunge
+        # dalla rete docker interna: senza questo l'UI proporrebbe l'URL pubblico.
+        self.hook_base_url: str = os.getenv("HOOK_BASE_URL", "").strip().rstrip("/")
 
         # Metriche live (CPU/RAM). Disattivabile su host con molti container.
         self.enable_stats: bool = _env_bool("ENABLE_STATS", True)

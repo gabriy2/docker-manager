@@ -308,6 +308,22 @@ def list_containers() -> list[dict]:
     return items
 
 
+def self_name() -> str:
+    """Nome del container in cui gira il pannello.
+
+    Serve a proporre l'URL interno dei webhook (`http://<nome>:<porta>/hooks/…`):
+    su una rete docker definita dall'utente il DNS interno risolve il nome del
+    container, quindi è l'indirizzo giusto per un backup tool che vive lì."""
+    if not SELF_ID:
+        return ""
+    # niente list_containers(): con HIDE_SELF=true filtrerebbe proprio noi
+    with contextlib.suppress(Exception):
+        for container in get_client().containers.list(all=True):
+            if container.id.startswith(SELF_ID):
+                return container.name
+    return ""
+
+
 def get_container(ref: str):
     client = get_client()
     try:

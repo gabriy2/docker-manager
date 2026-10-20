@@ -33,6 +33,10 @@
   <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4.5 4.5L19 7"/></symbol>
   <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 14a4 4 0 0 1 0-5.6l2.5-2.5a4 4 0 0 1 5.6 5.6L16.5 13"/><path d="M14 10a4 4 0 0 1 0 5.6L11.5 18a4 4 0 0 1-5.6-5.6L7.5 11"/></symbol>
   <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-hook" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a4 4 0 0 1 3.5 5.9l3 5.1"/><path d="M8.5 8.5 5 14.4A4 4 0 0 0 8.5 21H12"/><circle cx="12" cy="7" r="1.6" fill="currentColor" stroke="none"/><path d="M15 21h2.5A4 4 0 0 0 21 15"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 6V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3.5M15.5 12v2.5"/></symbol>
 </svg>
 
 <!-- ------------------------------ LOGIN ------------------------------ -->
@@ -52,7 +56,7 @@
 <div id="app" class="app" hidden>
 
   <header class="topbar">
-    <button class="icon-btn only-mobile" id="btn-menu" title="Menu"><svg class="ic"><use href="#i-logs"/></svg></button>
+    <button class="icon-btn only-mobile" id="btn-menu" title="Menu"><svg class="ic"><use href="#i-menu"/></svg></button>
     <a class="brand" href="#containers">
       <span class="brand-mark"><svg class="ic"><use href="#i-box"/></svg></span>
       <span class="brand-text">Docker<strong>Manager</strong></span>
@@ -78,28 +82,20 @@
     </div>
   </header>
 
+  <!-- La sidebar contiene solo destinazioni: i filtri stanno nella pagina
+       Container, accanto alla lista che filtrano. -->
   <aside class="sidebar" id="sidebar">
     <nav class="nav">
+      <div class="nav-section">Gestione</div>
       <button class="nav-item is-active" data-view="containers"><svg class="ic"><use href="#i-box"/></svg>Container<span class="nav-count" id="nav-count-containers"></span></button>
       <button class="nav-item" data-view="categories"><svg class="ic"><use href="#i-tag"/></svg>Categorie<span class="nav-count" id="nav-count-categories"></span></button>
+      <button class="nav-item" data-view="stacks"><svg class="ic"><use href="#i-layers"/></svg>Stack<span class="nav-count" id="nav-count-stacks"></span></button>
+
+      <div class="nav-section">Automazione</div>
       <button class="nav-item" data-view="schedules"><svg class="ic"><use href="#i-clock"/></svg>Pianificazioni<span class="nav-count" id="nav-count-schedules"></span></button>
+      <button class="nav-item" data-view="hooks"><svg class="ic"><use href="#i-hook"/></svg>Hook di backup<span class="nav-count" id="nav-count-hooks"></span></button>
       <button class="nav-item" data-view="activity"><svg class="ic"><use href="#i-pulse"/></svg>Attività</button>
     </nav>
-
-    <div class="side-block">
-      <div class="side-title">Stato</div>
-      <div class="chip-col" id="state-filters"></div>
-    </div>
-
-    <div class="side-block">
-      <div class="side-title">Categorie<button class="side-add" id="btn-new-category-side" title="Nuova categoria"><svg class="ic"><use href="#i-plus"/></svg></button></div>
-      <div class="side-list" id="side-categories"></div>
-    </div>
-
-    <div class="side-block">
-      <div class="side-title">Stack</div>
-      <div class="side-list" id="side-stacks"></div>
-    </div>
 
     <div class="side-foot">
       <span id="host-info"></span>
@@ -118,16 +114,58 @@
           <span class="muted" id="filter-note"></span>
         </div>
         <div class="toolbar-right">
-          <div class="segmented" id="group-mode">
-            <button data-group="none" class="is-active">Elenco</button>
-            <button data-group="category">Per categoria</button>
-            <button data-group="stack">Per stack</button>
-          </div>
           <button class="btn btn-ghost" id="btn-select-all"><svg class="ic"><use href="#i-check"/></svg>Seleziona tutti</button>
         </div>
       </div>
 
+      <div class="filterbar">
+        <div class="filter-field">
+          <span class="filter-label">Stato</span>
+          <div class="segmented" id="state-filters"></div>
+        </div>
+        <label class="filter-field">
+          <span class="filter-label">Categoria</span>
+          <select id="filter-category"></select>
+        </label>
+        <label class="filter-field">
+          <span class="filter-label">Stack</span>
+          <select id="filter-stack"></select>
+        </label>
+        <label class="filter-field">
+          <span class="filter-label">Raggruppa per</span>
+          <select id="group-mode">
+            <option value="none">Niente — elenco unico</option>
+            <option value="category">Categoria</option>
+            <option value="stack">Stack</option>
+          </select>
+        </label>
+        <button class="btn btn-sm btn-ghost filter-reset" data-act="clear-filters" hidden>
+          <svg class="ic"><use href="#i-close"/></svg>Azzera filtri</button>
+      </div>
+
       <div id="containers-root" class="groups"></div>
+    </section>
+
+    <!-- STACK -->
+    <section class="view" data-view="stacks">
+      <div class="toolbar">
+        <div class="toolbar-left"><h2 class="view-title">Stack</h2>
+          <span class="muted">Progetti compose rilevati sull'host</span></div>
+      </div>
+      <div id="stacks-root" class="card-grid"></div>
+    </section>
+
+    <!-- HOOK DI BACKUP -->
+    <section class="view" data-view="hooks">
+      <div class="toolbar">
+        <div class="toolbar-left"><h2 class="view-title">Hook di backup</h2>
+          <span class="muted">Spegne i container prima di un backup e li riaccende quando è finito</span></div>
+        <div class="toolbar-right">
+          <button class="btn btn-primary" id="btn-new-hook"><svg class="ic"><use href="#i-plus"/></svg>Nuovo hook</button>
+        </div>
+      </div>
+      <div class="filterbar" id="hook-base" hidden></div>
+      <div id="hooks-root" class="card-grid"></div>
     </section>
 
     <!-- CATEGORIE -->

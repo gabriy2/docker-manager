@@ -124,6 +124,52 @@ class ScheduleOut(BaseModel):
     run_count: int
 
 
+class HookIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    enabled: bool = True
+    target_kind: str = "containers"
+    target_ref: str = ""
+    targets: list[str] = Field(default_factory=list)
+    mode: str = "stop"
+    resume_after_minutes: int = Field(default=120, ge=0, le=10080)
+
+    @field_validator("target_kind")
+    @classmethod
+    def _kind_ok(cls, value: str) -> str:
+        if value not in {"containers", "category", "stack", "all"}:
+            raise ValueError("target_kind non valido")
+        return value
+
+    @field_validator("mode")
+    @classmethod
+    def _mode_ok(cls, value: str) -> str:
+        if value not in {"stop", "pause"}:
+            raise ValueError("mode non valido (ammessi: stop, pause)")
+        return value
+
+
+class HookOut(BaseModel):
+    id: int
+    name: str
+    enabled: bool
+    target_kind: str
+    target_ref: str
+    targets: list[str]
+    target_label: str
+    mode: str
+    resume_after_minutes: int
+    token: str
+    pre_url: str
+    post_url: str
+    suspended: list[str]
+    suspended_at: datetime | None
+    last_phase: str
+    last_run_at: datetime | None
+    last_status: str
+    last_message: str
+    run_count: int
+
+
 class ActivityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

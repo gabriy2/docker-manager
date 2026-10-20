@@ -15,3 +15,7 @@ secret.key
 .vscode/
 .DS_Store
 .claude/
+
+# screenshot e appunti locali
+*.png
+*.jpg

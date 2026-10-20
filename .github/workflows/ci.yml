@@ -93,6 +93,22 @@ jobs:
             -d '{"name":"CI","action":"restart","target_kind":"category","target_ref":"1","trigger_kind":"cron","cron_expr":"0 4 * * *"}' \
             | grep -q '"next_run"'
 
+      - name: Crea un hook di backup e chiama i due webhook
+        run: |
+          set -eux
+          TOKEN=$(curl -fsS -X POST http://localhost:8000/api/hooks \
+            -H 'content-type: application/json' \
+            -d '{"name":"CI","target_kind":"containers","targets":["dm-ci"]}' \
+            | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
+          # il bersaglio è il pannello stesso, che gli hook escludono sempre:
+          # i due webhook devono rispondere 2xx senza sospendere niente, e il
+          # runner non rischia di vedersi spegnere altri container
+          curl -fsS -X POST "http://localhost:8000/hooks/$TOKEN/pre" \
+            -H 'content-type: application/json' -d '{"phase":"pre"}' | grep -q '"phase":"pre"'
+          curl -fsS -X POST "http://localhost:8000/hooks/$TOKEN/post" \
+            -H 'content-type: application/json' -d '{"phase":"post","status":"success"}' | grep -q '"phase":"post"'
+          curl -fsS http://localhost:8000/api/meta | grep -q '"internal_base_url"'
+
       - name: Log del container in caso di errore
         if: failure()
         run: docker logs dm-ci

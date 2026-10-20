@@ -98,6 +98,17 @@ def _run_job(schedule_id: int) -> None:
         manager.remove(schedule_id)
 
 
+WATCHDOG_JOB_ID = "backup-hooks-watchdog"
+
+
+def _run_watchdog() -> None:
+    """Riaccende i container lasciati sospesi da un backup mai concluso."""
+    from . import hooks as hk
+
+    with contextlib.suppress(Exception), session_scope() as db:
+        hk.watchdog(db)
+
+
 class ScheduleManager:
     def __init__(self) -> None:
         self.scheduler = BackgroundScheduler(
@@ -110,6 +121,13 @@ class ScheduleManager:
     def start(self) -> None:
         if not self.scheduler.running:
             self.scheduler.start()
+        self.scheduler.add_job(
+            _run_watchdog,
+            trigger=IntervalTrigger(minutes=1, timezone=settings.timezone),
+            id=WATCHDOG_JOB_ID,
+            name="rete di sicurezza webhook di backup",
+            replace_existing=True,
+        )
         self.sync_all()
 
     def shutdown(self) -> None:

@@ -120,12 +120,51 @@ class Schedule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class BackupHook(Base):
+    """Coppia di webhook pre/post pensata per i backup (ZeroByte & simili).
+
+    Il webhook *pre* sospende i container indicati e memorizza in `suspended`
+    quali erano effettivamente attivi; il *post* riavvia esattamente quelli.
+    Così un container già fermo prima del backup resta fermo anche dopo."""
+
+    __tablename__ = "backup_hooks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # su cosa agire (stesse convenzioni delle pianificazioni)
+    target_kind: Mapped[str] = mapped_column(String(16), default="containers")
+    target_ref: Mapped[str] = mapped_column(String(255), default="")
+    targets: Mapped[list] = mapped_column(JSON, default=list)
+
+    # come sospendere: stop (spegne) oppure pause (congela, ripresa immediata)
+    mode: Mapped[str] = mapped_column(String(16), default="stop")
+
+    # rete di sicurezza: se il post non arriva entro N minuti riavviamo da soli
+    resume_after_minutes: Mapped[int] = mapped_column(Integer, default=120)
+
+    # stato della sospensione in corso
+    suspended: Mapped[list] = mapped_column(JSON, default=list)
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # esito dell'ultima chiamata
+    last_phase: Mapped[str] = mapped_column(String(16), default="")  # pre|post|resume
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str] = mapped_column(String(16), default="")
+    last_message: Mapped[str] = mapped_column(Text, default="")
+    run_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ActivityLog(Base):
     __tablename__ = "activity_log"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
-    source: Mapped[str] = mapped_column(String(16), default="ui")  # ui|schedule|api
+    source: Mapped[str] = mapped_column(String(16), default="ui")  # ui|schedule|api|webhook
     action: Mapped[str] = mapped_column(String(24), default="")
     target: Mapped[str] = mapped_column(String(255), default="")
     status: Mapped[str] = mapped_column(String(16), default="ok")  # ok|error|partial

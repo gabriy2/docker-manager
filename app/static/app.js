@@ -14,6 +14,7 @@ const state = {
   stacks: [],
   counts: { total: 0, running: 0, stopped: 0, paused: 0, unhealthy: 0 },
   schedules: [],
+  hooks: [],
   activity: [],
   view: "containers",
   group: "none",
@@ -22,6 +23,7 @@ const state = {
   filter: null,            // {kind:'category'|'stack', ref:string}
   selection: new Set(),    // nomi container
   busy: new Set(),         // chiavi azione in corso
+  hookBase: localStorage.getItem("dm-hook-base") || "internal",
   auto: true,
   timer: null,
   modalOpen: false,
@@ -35,8 +37,11 @@ const ACTION_LABELS = {
   start: "Avvia", stop: "Ferma", restart: "Riavvia", pause: "Pausa",
   unpause: "Riprendi", kill: "Termina", up: "compose up", down: "compose down",
 };
-const PALETTE = ["#6366f1", "#8b5cf6", "#ec4899", "#ef4444", "#f59e0b", "#22c55e",
-                 "#14b8a6", "#0ea5e9", "#64748b", "#a855f7"];
+// tinte del design system di Portainer (blue/indigo/purple/pink/error/orange/
+// warning/success/teal/gray, livello 7 o 500)
+const PALETTE = ["#0ba5ec", "#6172f3", "#7a5af8", "#ee46bc", "#f04438",
+                 "#ef6820", "#f79009", "#12b76a", "#15b79e", "#667085"];
+const STACK_COLORS = { removed: "#f04438", compose: "#0ba5ec", plain: "#667085" };
 const ICON_CHOICES = ["📦", "🗄️", "🌐", "🛠️", "🎬", "🎵", "🏠", "🔒", "📊", "🤖", "🧪", "💾", "📡", "🎮", "⚙️", "🔥"];
 
 /* ------------------------------ utilità ------------------------------ */
@@ -183,6 +188,9 @@ async function refresh({ silent = true } = {}) {
     if (state.view === "schedules" || !state.schedules.length) {
       state.schedules = await api("/api/schedules");
     }
+    if (state.view === "hooks" || !state.hooks.length) {
+      state.hooks = await api("/api/hooks");
+    }
     if (state.view === "activity") {
       state.activity = await api("/api/activity?limit=120");
     }
@@ -204,11 +212,12 @@ function stopAutoRefresh() { if (state.timer) clearInterval(state.timer); state.
 
 function render() {
   renderDockerStatus();
-  renderSidebar();
   renderNavCounts();
-  if (state.view === "containers") { renderStats(); renderContainers(); }
+  if (state.view === "containers") { renderStats(); renderFilters(); renderContainers(); }
   if (state.view === "categories") renderCategories();
+  if (state.view === "stacks") renderStacks();
   if (state.view === "schedules") renderSchedules();
+  if (state.view === "hooks") renderHooks();
   if (state.view === "activity") renderActivity();
   renderBulkbar();
 }
@@ -231,8 +240,9 @@ function renderDockerStatus() {
 function renderNavCounts() {
   $("#nav-count-containers").textContent = state.counts.total || "";
   $("#nav-count-categories").textContent = state.categories.length || "";
-  const active = state.schedules.filter((s) => s.enabled).length;
-  $("#nav-count-schedules").textContent = active || "";
+  $("#nav-count-stacks").textContent = state.stacks.length || "";
+  $("#nav-count-schedules").textContent = state.schedules.filter((s) => s.enabled).length || "";
+  $("#nav-count-hooks").textContent = state.hooks.filter((h) => h.enabled).length || "";
 }
 
 function renderStats() {
@@ -250,49 +260,32 @@ function renderStats() {
     </div>`).join("");
 }
 
-function renderSidebar() {
-  const filters = [
+/* La barra dei filtri vive nella pagina Container: un solo posto dove
+   restringere l'elenco, invece delle tre liste che c'erano nella sidebar. */
+function renderFilters() {
+  const states = [
     ["all", "Tutti", state.counts.total],
     ["running", "In esecuzione", state.counts.running],
     ["stopped", "Fermi", state.counts.stopped],
     ["paused", "In pausa", state.counts.paused],
   ];
-  $("#state-filters").innerHTML = filters.map(([value, label, count]) => `
-    <button class="chip ${state.stateFilter === value ? "is-active" : ""}" data-act="state-filter" data-value="${value}">
-      ${label}<span class="muted" style="font-size:11px">${count ?? 0}</span>
-    </button>`).join("");
+  $("#state-filters").innerHTML = states.map(([value, label, count]) => `
+    <button type="button" data-act="state-filter" data-value="${value}"
+      class="${state.stateFilter === value ? "is-active" : ""}">${label}
+      <span class="seg-count">${count ?? 0}</span></button>`).join("");
 
-  $("#side-categories").innerHTML = state.categories.length
-    ? state.categories.map((cat) => sideRow({
-        kind: "category", ref: String(cat.id), icon: cat.icon, color: cat.color,
-        name: cat.name, running: cat.running, total: cat.total,
-      })).join("")
-    : `<div class="muted" style="padding:6px 8px">Nessuna categoria.<br>Creane una per i comandi di massa.</div>`;
+  const catRef = state.filter?.kind === "category" ? state.filter.ref : "";
+  $("#filter-category").innerHTML = `<option value="">Tutte le categorie</option>` +
+    state.categories.map((c) =>
+      `<option value="${c.id}" ${String(c.id) === catRef ? "selected" : ""}>${esc(c.icon)} ${esc(c.name)} (${c.running}/${c.total})</option>`).join("");
 
-  $("#side-stacks").innerHTML = state.stacks.length
-    ? state.stacks.map((stack) => sideRow({
-        kind: "stack", ref: stack.name, icon: null,
-        color: stack.removed ? "#ef4444" : stack.has_compose ? "#0ea5e9" : "#64748b",
-        name: stack.name, running: stack.running, total: stack.total,
-        removed: stack.removed, canRecreate: stack.can_recreate,
-      })).join("")
-    : `<div class="muted" style="padding:6px 8px">Nessuno stack rilevato.</div>`;
-}
+  const stackRef = state.filter?.kind === "stack" ? state.filter.ref : "";
+  $("#filter-stack").innerHTML = `<option value="">Tutti gli stack</option>` +
+    state.stacks.map((s) =>
+      `<option value="${esc(s.name)}" ${s.name === stackRef ? "selected" : ""}>${esc(s.name)}${s.removed ? " — rimosso" : ` (${s.running}/${s.total})`}</option>`).join("");
 
-function sideRow({ kind, ref, icon: emoji, color, name, running, total, removed, canRecreate }) {
-  const active = state.filter && state.filter.kind === kind && state.filter.ref === ref;
-  const acts = removed
-    ? `${canRecreate ? `<button class="mini-btn go" title="Ricrea lo stack (compose up)" data-act="group-action" data-kind="stack" data-ref="${esc(ref)}" data-action="up">${icon("bolt")}</button>` : ""}
-       <button class="mini-btn halt" title="Dimentica questo stack" data-act="forget-stack" data-ref="${esc(ref)}">${icon("trash")}</button>`
-    : `<button class="mini-btn go" title="Avvia tutti" data-act="group-action" data-kind="${kind}" data-ref="${esc(ref)}" data-action="start">${icon("play")}</button>
-       <button class="mini-btn halt" title="Ferma tutti" data-act="group-action" data-kind="${kind}" data-ref="${esc(ref)}" data-action="stop">${icon("stop")}</button>
-       <button class="mini-btn" title="Pianifica" data-act="schedule-for" data-kind="${kind}" data-ref="${esc(ref)}">${icon("clock")}</button>`;
-  return `<div class="side-row ${active ? "is-active" : ""}" data-act="filter" data-kind="${kind}" data-ref="${esc(ref)}" role="button" tabindex="0">
-    ${emoji ? `<span style="font-size:13px">${esc(emoji)}</span>` : `<span class="swatch" style="background:${esc(color)};color:${esc(color)}"></span>`}
-    <span class="side-name" title="${esc(name)}${removed ? " — rimosso" : ""}">${esc(name)}</span>
-    <span class="side-meta">${removed ? "rimosso" : `${running}/${total}`}</span>
-    <span class="mini-acts">${acts}</span>
-  </div>`;
+  $("#group-mode").value = state.group;
+  $(".filter-reset").hidden = !(state.filter || state.stateFilter !== "all" || state.search);
 }
 
 /* ------------------------------ render: container ------------------------------ */
@@ -315,22 +308,16 @@ function visibleContainers() {
   });
 }
 
-function filterNote() {
-  const bits = [];
-  if (state.filter?.kind === "category") {
-    const cat = state.categories.find((c) => String(c.id) === state.filter.ref);
-    if (cat) bits.push(`categoria “${cat.name}”`);
-  }
-  if (state.filter?.kind === "stack") bits.push(`stack “${state.filter.ref}”`);
-  if (state.stateFilter !== "all") bits.push(STATE_LABELS[state.stateFilter] || state.stateFilter);
-  if (state.search) bits.push(`ricerca “${state.search}”`);
-  return bits.length ? `filtrato: ${bits.join(" · ")} — <a href="#" data-act="clear-filters">azzera</a>` : "";
+function filterNote(shown) {
+  const total = state.containers.length;
+  if (shown === total) return `${total} in tutto`;
+  return `${shown} di ${total} — filtrati`;
 }
 
 function renderContainers() {
-  $("#filter-note").innerHTML = filterNote();
   const root = $("#containers-root");
   const items = visibleContainers();
+  $("#filter-note").textContent = filterNote(items.length);
 
   if (!state.docker.connected) {
     root.innerHTML = emptyState("bolt", "Docker non raggiungibile",
@@ -351,7 +338,7 @@ function renderContainers() {
 
   if (state.group === "none") {
     const panels = removedPinned.map((s) => removedStackSection({
-      title: s.name, ref: s.name, color: "#ef4444", canRecreate: s.can_recreate,
+      title: s.name, ref: s.name, color: STACK_COLORS.removed, canRecreate: s.can_recreate,
     })).join("");
     root.innerHTML = panels + `<div class="rows">${items.map(containerRow).join("")}</div>`;
     return;
@@ -367,7 +354,7 @@ function renderContainers() {
       });
     }
     const orphans = items.filter((c) => !c.categories.length);
-    if (orphans.length) groups.push({ title: "Senza categoria", color: "#64748b", kind: null, ref: null, members: orphans });
+    if (orphans.length) groups.push({ title: "Senza categoria", color: STACK_COLORS.plain, kind: null, ref: null, members: orphans });
   } else {
     for (const stack of state.stacks) {
       const members = items.filter((c) => (c.stack || "(senza stack)") === stack.name);
@@ -375,7 +362,7 @@ function renderContainers() {
       if (!members.length && !stack.removed) continue;
       groups.push({
         title: stack.name,
-        color: stack.removed ? "#ef4444" : stack.has_compose ? "#0ea5e9" : "#64748b",
+        color: stack.removed ? STACK_COLORS.removed : stack.has_compose ? STACK_COLORS.compose : STACK_COLORS.plain,
         kind: "stack", ref: stack.name, members, compose: stack.has_compose,
         removed: stack.removed, canRecreate: stack.can_recreate,
       });
@@ -409,7 +396,7 @@ function renderContainers() {
 function removedStackSection({ title, ref, color, canRecreate }) {
   return `<section>
     <div class="group-head">
-      <div class="group-title"><span class="swatch" style="background:${esc(color || "#ef4444")}"></span>${esc(title)}</div>
+      <div class="group-title"><span class="swatch" style="background:${esc(color || STACK_COLORS.removed)}"></span>${esc(title)}</div>
       <div class="group-meta">rimosso</div>
       <div class="group-acts">
         ${canRecreate
@@ -464,7 +451,8 @@ function containerRow(c) {
     `<button class="act ${cls} ${isBusy ? "busy" : ""}" title="${title}" ${enabled && !isBusy ? "" : "disabled"}
       data-act="container-action" data-name="${esc(c.name)}" data-action="${action}">${icon(ic)}</button>`;
 
-  return `<div class="crow ${selected ? "is-selected" : ""} ${running ? "" : "is-down"} ${c.is_self ? "is-self" : ""}" data-name="${esc(c.name)}">
+  return `<div class="crow ${selected ? "is-selected" : ""} ${running ? "" : "is-down"} ${c.is_self ? "is-self" : ""}"
+    data-name="${esc(c.name)}" data-state="${esc(c.state)}">
     <input class="cbox" type="checkbox" data-act="select" data-name="${esc(c.name)}" ${selected ? "checked" : ""} aria-label="seleziona ${esc(c.name)}">
     <div class="cmain">
       <div class="cname-row">
@@ -552,6 +540,172 @@ function renderCategories() {
         <button class="btn btn-sm btn-danger" data-act="group-action" data-kind="category" data-ref="${cat.id}" data-action="stop">${icon("stop")}Ferma tutti</button>
         <button class="btn btn-sm btn-ghost" data-act="group-action" data-kind="category" data-ref="${cat.id}" data-action="restart">${icon("restart")}Riavvia</button>
         <button class="btn btn-sm btn-ghost" data-act="schedule-for" data-kind="category" data-ref="${cat.id}">${icon("clock")}Pianifica</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+/* ------------------------------ render: stack ------------------------------ */
+
+function renderStacks() {
+  const root = $("#stacks-root");
+  if (!state.stacks.length) {
+    root.innerHTML = emptyState("layers", "Nessuno stack",
+      "Gli stack sono i progetti <code>docker compose</code> presenti sull'host: compaiono qui da soli.");
+    return;
+  }
+  root.innerHTML = state.stacks.map((s) => {
+    const color = s.removed ? STACK_COLORS.removed : s.has_compose ? STACK_COLORS.compose : STACK_COLORS.plain;
+    const pct = s.total ? Math.round((s.running / s.total) * 100) : 0;
+    const members = state.containers
+      .filter((c) => (c.stack || "(senza stack)") === s.name)
+      .map((c) => `<span class="badge" title="${esc(STATE_LABELS[c.state] || c.state)}">
+        <span class="swatch state-${esc(c.state)}"></span>${esc(c.name)}</span>`).join("")
+      || `<span class="muted">Nessun container presente</span>`;
+
+    const sub = s.removed
+      ? "rimosso con compose down"
+      : `${s.running}/${s.total} attivi${s.has_compose ? " · file compose disponibile" : ""}`;
+
+    const composeBtns = s.has_compose && s.can_recreate ? `
+      <button class="btn btn-sm btn-ghost" data-act="group-action" data-kind="stack" data-ref="${esc(s.name)}" data-action="up">${icon("bolt")}compose up</button>
+      <button class="btn btn-sm btn-ghost" data-act="group-action" data-kind="stack" data-ref="${esc(s.name)}" data-action="down">${icon("stop")}compose down</button>` : "";
+
+    const foot = s.removed
+      ? `${s.can_recreate
+            ? `<button class="btn btn-sm btn-ok" data-act="group-action" data-kind="stack" data-ref="${esc(s.name)}" data-action="up">${icon("bolt")}Ricrea</button>`
+            : ""}
+         <button class="btn btn-sm btn-danger" data-act="forget-stack" data-ref="${esc(s.name)}">${icon("trash")}Dimentica</button>`
+      : `<button class="btn btn-sm btn-ok" data-act="group-action" data-kind="stack" data-ref="${esc(s.name)}" data-action="start">${icon("play")}Avvia tutti</button>
+         <button class="btn btn-sm btn-danger" data-act="group-action" data-kind="stack" data-ref="${esc(s.name)}" data-action="stop">${icon("stop")}Ferma tutti</button>
+         <button class="btn btn-sm btn-ghost" data-act="group-action" data-kind="stack" data-ref="${esc(s.name)}" data-action="restart">${icon("restart")}Riavvia</button>
+         ${composeBtns}
+         <button class="btn btn-sm btn-ghost" data-act="schedule-for" data-kind="stack" data-ref="${esc(s.name)}">${icon("clock")}Pianifica</button>
+         <button class="btn btn-sm btn-ghost" data-act="show-containers" data-kind="stack" data-ref="${esc(s.name)}">${icon("box")}Mostra</button>`;
+
+    return `<article class="card">
+      <div class="card-head">
+        <div class="card-ic" style="background:${esc(color)}22;color:${esc(color)}">${icon("layers")}</div>
+        <div style="min-width:0">
+          <div class="card-title">${esc(s.name)}</div>
+          <div class="card-sub">${esc(sub)}</div>
+        </div>
+      </div>
+      <div class="card-body">
+        ${s.removed ? "" : `<div class="progress"><span style="width:${pct}%"></span></div>`}
+        <div class="member-list">${members}</div>
+        ${s.removed && !s.can_recreate
+          ? `<div class="field-hint">Per ricrearlo serve <code>COMPOSE_CLI=true</code> e la cartella del progetto montata nel pannello.</div>`
+          : ""}
+      </div>
+      <div class="card-foot">${foot}</div>
+    </article>`;
+  }).join("");
+}
+
+/* ------------------------------ render: hook di backup ------------------------------ */
+
+/* Base degli URL mostrati nelle card.
+
+   L'interfaccia conosce solo l'indirizzo da cui la stai navigando: dietro a un
+   reverse proxy è quello pubblico, che però non è l'indirizzo giusto se il
+   backup tool vive sulla stessa rete docker del pannello. Il server ci dice
+   qual è l'indirizzo interno e qui si può scegliere quale mostrare. */
+function hookBases() {
+  const internal = state.meta.internal_base_url || "";
+  const list = [];
+  if (internal) list.push({ key: "internal", label: "Rete docker", url: internal });
+  list.push({ key: "external", label: "Questo indirizzo", url: location.origin });
+  return list;
+}
+
+function hookOrigin() {
+  const bases = hookBases();
+  const chosen = bases.find((b) => b.key === state.hookBase);
+  return (chosen || bases[0]).url;
+}
+
+function renderHookBasePicker() {
+  const host = $("#hook-base");
+  const bases = hookBases();
+  if (bases.length < 2) { host.hidden = true; return; }
+  host.hidden = false;
+  const current = hookOrigin();
+  host.innerHTML = `
+    <div class="filter-field">
+      <span class="filter-label">URL da mostrare</span>
+      <div class="segmented">${bases.map((b) =>
+        `<button type="button" data-act="hook-base" data-value="${b.key}"
+          class="${b.url === current ? "is-active" : ""}" title="${esc(b.url)}">${b.label}</button>`).join("")}</div>
+    </div>
+    <p class="muted" style="margin:0;flex:1;min-width:220px">
+      ${state.hookBase === "external"
+        ? `Indirizzo pubblico: usalo solo se il backup tool sta <b>fuori</b> dall'host. Passerà dal reverse proxy, che devi configurare per non chiedere autenticazione su <code>/hooks/</code>, e il token viaggerà su internet.`
+        : `Indirizzo interno alla rete docker: è quello giusto se il backup tool gira su questo host. Non passa dal reverse proxy e il token non esce dalla rete. I due container devono condividere una rete.`}
+    </p>`;
+}
+
+function renderHooks() {
+  renderHookBasePicker();
+  const root = $("#hooks-root");
+  if (!state.hooks.length) {
+    root.innerHTML = emptyState("hook", "Nessun hook di backup",
+      `Un hook espone due URL da incollare nel tuo strumento di backup: il primo spegne
+       i container, il secondo li riaccende a backup finito.`);
+    return;
+  }
+  root.innerHTML = state.hooks.map((h) => {
+    const sospesi = h.suspended.length;
+    const tone = sospesi ? "var(--warn)" : h.enabled ? "var(--ok)" : "var(--muted)";
+    const statusPill = sospesi
+      ? `<span class="pill pill-warn"><span class="dot"></span>${sospesi} container sospesi</span>`
+      : h.last_status
+        ? `<span class="pill ${h.last_status === "ok" ? "pill-ok" : h.last_status === "partial" ? "pill-warn" : "pill-err"}"><span class="dot"></span>${esc(h.last_phase || h.last_status)}</span>`
+        : `<span class="pill pill-muted"><span class="dot"></span>mai chiamato</span>`;
+
+    const url = (path) => `${hookOrigin()}${path}`;
+    const urlRow = (label, path) => `
+      <div class="url-row">
+        <span class="url-tag">${label}</span>
+        <input class="url-input mono" readonly value="${esc(url(path))}" onfocus="this.select()">
+        <button class="act" title="Copia" data-act="copy" data-value="${esc(url(path))}">${icon("copy")}</button>
+      </div>`;
+
+    return `<article class="card" style="${h.enabled ? "" : "opacity:.62"}">
+      <div class="card-head">
+        <div class="card-ic" style="background:color-mix(in srgb, ${tone} 16%, transparent);color:${tone}">${icon("hook")}</div>
+        <div style="min-width:0">
+          <div class="card-title">${esc(h.name)}</div>
+          <div class="card-sub">${h.mode === "pause" ? "Mette in pausa" : "Spegne"} → ${esc(h.target_label)}</div>
+        </div>
+        <div class="card-head-acts">
+          <label class="switch" title="${h.enabled ? "Disattiva" : "Attiva"}">
+            <input type="checkbox" data-act="toggle-hook" data-id="${h.id}" ${h.enabled ? "checked" : ""}>
+            <span class="switch-track"></span></label>
+        </div>
+      </div>
+      <div class="card-body">
+        ${urlRow("pre", h.pre_url)}
+        ${urlRow("post", h.post_url)}
+        ${sospesi ? `<div class="form-ok" style="background:var(--warn-soft);color:var(--warn);border-color:color-mix(in srgb, var(--warn) 28%, transparent)">
+            Sospesi da ${fmtRelative(h.suspended_at)}: <b>${h.suspended.map(esc).join(", ")}</b>.
+            ${h.resume_after_minutes
+              ? `Se il post non arriva, li riaccendo da solo dopo ${h.resume_after_minutes} minuti.`
+              : "La ripresa automatica è disattivata: riprendili a mano se il backup si è piantato."}
+          </div>` : ""}
+        <dl class="kv">
+          <dt>Ripresa</dt><dd>${h.resume_after_minutes ? `automatica dopo ${h.resume_after_minutes} min senza post` : "<span class=\"muted\">solo su chiamata del post</span>"}</dd>
+          <dt>Ultima</dt><dd>${h.last_run_at ? `${fmtDT(h.last_run_at, state.meta.timezone)} — ${esc(h.last_message || "")}` : "<span class=\"muted\">—</span>"}</dd>
+        </dl>
+        <div>${statusPill} <span class="muted">${h.run_count} chiamate</span></div>
+      </div>
+      <div class="card-foot">
+        ${sospesi
+          ? `<button class="btn btn-sm btn-ok" data-act="hook-run" data-id="${h.id}" data-phase="post">${icon("play")}Riprendi adesso</button>`
+          : `<button class="btn btn-sm" data-act="hook-run" data-id="${h.id}" data-phase="pre">${icon("bolt")}Prova il pre</button>`}
+        <button class="btn btn-sm btn-ghost" data-act="edit-hook" data-id="${h.id}">${icon("edit")}Modifica</button>
+        <button class="btn btn-sm btn-ghost" data-act="rotate-hook" data-id="${h.id}">${icon("key")}Rigenera token</button>
+        <button class="btn btn-sm btn-danger" data-act="delete-hook" data-id="${h.id}">${icon("trash")}Elimina</button>
       </div>
     </article>`;
   }).join("");
@@ -1182,6 +1336,148 @@ function openScheduleModal(schedule = null, prefill = null) {
   });
 }
 
+/* ------------------------------ modale: hook di backup ------------------------------ */
+
+function openHookModal(hook = null) {
+  const h = hook || {};
+  const form = {
+    kind: h.target_kind || "containers",
+    ref: String(h.target_ref ?? ""),
+    targets: new Set(h.targets || []),
+    mode: h.mode || "stop",
+  };
+
+  openModal({
+    title: hook ? `Modifica “${esc(h.name)}”` : "Nuovo hook di backup",
+    subtitle: "Due URL da incollare nel tuo strumento di backup",
+    wide: true,
+    body: `
+      <div class="row2">
+        <label class="field"><span>Nome</span>
+          <input id="hk-name" value="${esc(h.name || "")}" placeholder="es. Backup notturno Vaultwarden" maxlength="120"></label>
+        <label class="field"><span>Ripresa automatica</span>
+          <input id="hk-resume" type="number" min="0" max="10080" value="${h.resume_after_minutes ?? 120}">
+          <span class="field-hint">Minuti dopo i quali riaccendo i container se il webhook <b>post</b> non arriva (backup piantato). 0 = disattivata.</span></label>
+      </div>
+
+      <div class="field"><span>Come sospendere</span>
+        <div class="segmented" id="hk-mode">
+          <button type="button" data-mode="stop" class="${form.mode === "stop" ? "is-active" : ""}">Spegni (stop)</button>
+          <button type="button" data-mode="pause" class="${form.mode === "pause" ? "is-active" : ""}">Metti in pausa</button>
+        </div>
+        <span class="field-hint" id="hk-mode-hint"></span>
+      </div>
+
+      <div class="field"><span>Container da sospendere</span>
+        <div class="segmented" id="hk-kind">
+          ${[["containers", "Scelti a mano"], ["category", "Categoria"], ["stack", "Stack"], ["all", "Tutti"]]
+            .map(([k, l]) => `<button type="button" data-kind="${k}" class="${form.kind === k ? "is-active" : ""}">${l}</button>`).join("")}
+        </div>
+      </div>
+      <div id="hk-target"></div>
+      <div class="field-hint">Il pannello non si spegne mai da solo: senza di lui nessuno potrebbe ricevere il webhook post.</div>
+      <p class="form-error" id="hk-error" hidden></p>`,
+    footer: `${hook ? `<button class="btn btn-danger" data-act="delete-hook" data-id="${h.id}">${icon("trash")}Elimina</button>` : ""}
+      <button class="btn btn-ghost" data-act="close-modal">Annulla</button>
+      <button class="btn btn-primary" id="hk-save">${icon("check")}${hook ? "Salva" : "Crea hook"}</button>`,
+    onMount(overlay) {
+      const hint = $("#hk-mode-hint", overlay);
+      const drawHint = () => {
+        hint.innerHTML = form.mode === "stop"
+          ? "Spegnimento completo: più sicuro per i database, la riaccensione richiede il tempo di avvio del servizio."
+          : "Congela i processi senza chiudere il container: ripresa immediata, ma i file aperti restano tali — va bene solo se il backup tollera uno stato congelato.";
+      };
+      drawHint();
+
+      const drawTarget = () => {
+        const host = $("#hk-target", overlay);
+        if (form.kind === "all") {
+          host.innerHTML = `<div class="field-hint">Verranno sospesi <b>tutti</b> i container attivi dell'host.</div>`;
+        } else if (form.kind === "category") {
+          host.innerHTML = state.categories.length
+            ? `<label class="field"><span>Categoria</span><select id="hk-ref">${state.categories.map((c) =>
+                `<option value="${c.id}" ${String(c.id) === form.ref ? "selected" : ""}>${esc(c.icon)} ${esc(c.name)} (${c.total})</option>`).join("")}</select></label>`
+            : `<div class="form-error">Nessuna categoria disponibile: creane una prima.</div>`;
+        } else if (form.kind === "stack") {
+          host.innerHTML = state.stacks.length
+            ? `<label class="field"><span>Stack</span><select id="hk-ref">${state.stacks.map((s) =>
+                `<option value="${esc(s.name)}" ${s.name === form.ref ? "selected" : ""}>${esc(s.name)} (${s.total})</option>`).join("")}</select></label>`
+            : `<div class="form-error">Nessuno stack rilevato.</div>`;
+        } else {
+          host.innerHTML = `<div class="field">
+            <input id="hk-search" placeholder="filtra per nome…" autocomplete="off">
+            <div class="picker" id="hk-picker"></div>
+            <div class="field-hint"><span id="hk-count">${form.targets.size}</span> selezionati</div></div>`;
+          const picker = $("#hk-picker", overlay);
+          const draw = (query = "") => {
+            const q = query.toLowerCase();
+            picker.innerHTML = state.containers
+              .filter((c) => !q || c.name.toLowerCase().includes(q))
+              .map((c) => `<label class="picker-item">
+                <input type="checkbox" value="${esc(c.name)}" ${form.targets.has(c.name) ? "checked" : ""}>
+                <span class="state-dot state-${esc(c.state)}"></span><span>${esc(c.name)}</span>
+                <span class="pi-sub">${esc(c.stack || "")}</span></label>`).join("")
+              || `<div class="muted" style="padding:10px">nessun risultato</div>`;
+          };
+          draw();
+          picker.addEventListener("change", (ev) => {
+            if (ev.target.type !== "checkbox") return;
+            ev.target.checked ? form.targets.add(ev.target.value) : form.targets.delete(ev.target.value);
+            $("#hk-count", overlay).textContent = form.targets.size;
+          });
+          $("#hk-search", overlay).addEventListener("input", (ev) => draw(ev.target.value));
+        }
+        const refSel = $("#hk-ref", overlay);
+        if (refSel) {
+          form.ref = refSel.value;
+          refSel.addEventListener("change", () => { form.ref = refSel.value; });
+        }
+      };
+      drawTarget();
+
+      $("#hk-mode", overlay).addEventListener("click", (ev) => {
+        const btn = ev.target.closest("button[data-mode]");
+        if (!btn) return;
+        form.mode = btn.dataset.mode;
+        $$("#hk-mode button", overlay).forEach((b) => b.classList.toggle("is-active", b === btn));
+        drawHint();
+      });
+      $("#hk-kind", overlay).addEventListener("click", (ev) => {
+        const btn = ev.target.closest("button[data-kind]");
+        if (!btn) return;
+        form.kind = btn.dataset.kind;
+        $$("#hk-kind button", overlay).forEach((b) => b.classList.toggle("is-active", b === btn));
+        drawTarget();
+      });
+
+      $("#hk-save", overlay).addEventListener("click", async () => {
+        const payload = {
+          name: $("#hk-name", overlay).value.trim(),
+          enabled: hook ? h.enabled : true,
+          target_kind: form.kind,
+          target_ref: form.kind === "category" || form.kind === "stack"
+            ? String($("#hk-ref", overlay)?.value || form.ref) : "",
+          targets: form.kind === "containers" ? [...form.targets] : [],
+          mode: form.mode,
+          resume_after_minutes: Number($("#hk-resume", overlay).value || 0),
+        };
+        const errBox = $("#hk-error", overlay);
+        errBox.hidden = true;
+        if (!payload.name) { errBox.hidden = false; errBox.textContent = "Il nome è obbligatorio."; return; }
+        try {
+          const res = hook
+            ? await api(`/api/hooks/${h.id}`, { method: "PATCH", body: payload })
+            : await api("/api/hooks", { method: "POST", body: payload });
+          state.hooks = res.hooks;
+          closeModal();
+          toast("ok", hook ? "Hook aggiornato" : "Hook creato", payload.name);
+          render();
+        } catch (err) { errBox.hidden = false; errBox.textContent = err.message; }
+      });
+    },
+  });
+}
+
 /* ------------------------------ conferme ------------------------------ */
 
 function confirmModal({ title, text, confirmLabel = "Conferma", danger = true, onConfirm }) {
@@ -1215,37 +1511,39 @@ document.addEventListener("click", async (ev) => {
   const navBtn = ev.target.closest(".nav-item");
   if (navBtn) { setView(navBtn.dataset.view); return; }
 
-  const groupBtn = ev.target.closest("#group-mode button");
-  if (groupBtn) {
-    state.group = groupBtn.dataset.group;
-    $$("#group-mode button").forEach((b) => b.classList.toggle("is-active", b === groupBtn));
-    renderContainers();
-    return;
-  }
-
   if (!trigger) return;
   const act = trigger.dataset.act;
-  const { name, action, kind, ref, id, value, names } = trigger.dataset;
+  const { name, action, kind, ref, id, value, names, phase } = trigger.dataset;
 
   switch (act) {
     case "close-modal":
       closeModal(); break;
 
     case "state-filter":
-      state.stateFilter = value; renderSidebar(); renderContainers(); break;
+      state.stateFilter = value; renderFilters(); renderContainers(); break;
 
-    case "filter": {
-      const same = state.filter && state.filter.kind === kind && state.filter.ref === ref;
-      state.filter = same ? null : { kind, ref };
+    case "show-containers":
+      state.filter = { kind, ref };
       setView("containers");
-      renderSidebar(); renderContainers();
       break;
-    }
 
     case "clear-filters":
       ev.preventDefault();
       state.filter = null; state.stateFilter = "all"; state.search = ""; $("#search").value = "";
-      renderSidebar(); renderContainers();
+      renderFilters(); renderContainers();
+      break;
+
+    case "hook-base":
+      state.hookBase = value;
+      localStorage.setItem("dm-hook-base", value);
+      renderHooks();
+      break;
+
+    case "copy":
+      try {
+        await navigator.clipboard.writeText(value);
+        toast("ok", "Copiato", value);
+      } catch { toast("warn", "Copia non riuscita", "seleziona l'URL e copialo a mano"); }
       break;
 
     case "clear-selection":
@@ -1363,6 +1661,68 @@ document.addEventListener("click", async (ev) => {
       });
       break;
     }
+    case "new-hook":
+      openHookModal(); break;
+    case "edit-hook":
+      openHookModal(state.hooks.find((h) => h.id === Number(id))); break;
+
+    case "hook-run": {
+      const hook = state.hooks.find((h) => h.id === Number(id));
+      const run = async () => {
+        try {
+          const res = await api(`/api/hooks/${id}/run/${phase}`, { method: "POST" });
+          state.hooks = res.hooks;
+          reportResult(res.result, phase === "pre" ? "Sospensione" : "Ripresa");
+          await refresh();
+        } catch (err) { toast("err", "Chiamata non riuscita", err.message); }
+      };
+      if (phase === "pre") {
+        confirmModal({
+          title: "Sospendere adesso i container?",
+          text: `È la stessa azione che eseguirà il backup: <b>${esc(hook?.target_label || "")}</b> verrà
+                 ${hook?.mode === "pause" ? "messo in pausa" : "spento"}.
+                 Per riaccendere usa poi «Riprendi adesso».`,
+          confirmLabel: "Sospendi", onConfirm: run,
+        });
+      } else await run();
+      break;
+    }
+
+    case "rotate-hook":
+      confirmModal({
+        title: "Rigenerare il token?",
+        text: "I due URL attuali smetteranno di funzionare: dovrai aggiornarli nello strumento di backup.",
+        confirmLabel: "Rigenera",
+        async onConfirm() {
+          try {
+            const res = await api(`/api/hooks/${id}/rotate`, { method: "POST" });
+            state.hooks = res.hooks;
+            toast("ok", "Token rigenerato", "aggiorna gli URL nel backup tool");
+            render();
+          } catch (err) { toast("err", "Operazione non riuscita", err.message); }
+        },
+      });
+      break;
+
+    case "delete-hook": {
+      const hook = state.hooks.find((h) => h.id === Number(id));
+      confirmModal({
+        title: "Eliminare l'hook?",
+        text: `“${esc(hook?.name || id)}” verrà rimosso e i suoi URL smetteranno di rispondere.`,
+        confirmLabel: "Elimina",
+        async onConfirm() {
+          try {
+            const res = await api(`/api/hooks/${id}`, { method: "DELETE" });
+            state.hooks = res.hooks;
+            closeModal();
+            toast("ok", "Hook eliminato");
+            render();
+          } catch (err) { toast("err", "Eliminazione non riuscita", err.message); }
+        },
+      });
+      break;
+    }
+
     case "run-schedule":
       try {
         const res = await api(`/api/schedules/${id}/run`, { method: "POST" });
@@ -1390,6 +1750,31 @@ document.addEventListener("change", async (ev) => {
       state.schedules = res.schedules;
       render();
     } catch (err) { toast("err", "Modifica non riuscita", err.message); }
+    return;
+  }
+  if (target.dataset?.act === "toggle-hook") {
+    try {
+      const res = await api(`/api/hooks/${target.dataset.id}/toggle`, { method: "POST" });
+      state.hooks = res.hooks;
+      render();
+    } catch (err) { toast("err", "Modifica non riuscita", err.message); }
+    return;
+  }
+
+  /* filtri della pagina Container */
+  if (target.id === "filter-category") {
+    state.filter = target.value ? { kind: "category", ref: target.value } : null;
+    renderFilters(); renderContainers();
+    return;
+  }
+  if (target.id === "filter-stack") {
+    state.filter = target.value ? { kind: "stack", ref: target.value } : null;
+    renderFilters(); renderContainers();
+    return;
+  }
+  if (target.id === "group-mode") {
+    state.group = target.value;
+    renderContainers();
   }
 });
 
@@ -1444,7 +1829,7 @@ async function init() {
   });
   $("#search").addEventListener("input", debounce((ev) => {
     state.search = ev.target.value;
-    renderContainers();
+    renderFilters(); renderContainers();
   }, 180));
   $("#btn-select-all").addEventListener("click", () => {
     const visible = visibleContainers().map((c) => c.name);
@@ -1453,8 +1838,8 @@ async function init() {
     renderContainers(); renderBulkbar();
   });
   $("#btn-new-category").addEventListener("click", () => openCategoryModal());
-  $("#btn-new-category-side").addEventListener("click", (ev) => { ev.stopPropagation(); openCategoryModal(); });
   $("#btn-new-schedule").addEventListener("click", () => openScheduleModal());
+  $("#btn-new-hook").addEventListener("click", () => openHookModal());
   $("#btn-clear-activity").addEventListener("click", () => confirmModal({
     title: "Svuotare lo storico?",
     text: "Tutte le voci di attività verranno cancellate.",
@@ -1483,7 +1868,7 @@ async function init() {
   });
 
   const hash = location.hash.replace("#", "");
-  if (["containers", "categories", "schedules", "activity"].includes(hash)) {
+  if (["containers", "categories", "stacks", "schedules", "hooks", "activity"].includes(hash)) {
     state.view = hash;
     $$(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.view === hash));
     $$(".view").forEach((v) => v.classList.toggle("is-active", v.dataset.view === hash));

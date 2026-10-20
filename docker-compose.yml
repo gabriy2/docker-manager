@@ -1,7 +1,7 @@
 services:
   docker-manager:
     # Immagine pubblicata dal workflow GitHub Actions:
-    #   image: ghcr.io/<utente>/docker-manager:latest
+    #   image: ghcr.io/gabriy2/docker-manager:latest
     # In locale puoi costruirla direttamente:
     build: .
     image: docker-manager:latest
@@ -27,6 +27,11 @@ services:
       # - /opt/stacks:/opt/stacks:ro
     labels:
       - "com.docker.compose.project=infra"
+    # Per gli hook di backup: ZeroByte deve poter raggiungere questo container.
+    # Mettili sulla stessa rete e nei webhook usa http://docker-manager:8000/hooks/<token>/pre
+    # (ricorda di aggiungere quell'origine a WEBHOOK_ALLOWED_ORIGINS di ZeroByte).
+    # networks:
+    #   - backup
 
   # Aggiornamento automatico dell'immagine una volta a settimana (facoltativo).
   # Avvialo con:  docker compose --profile autoupdate up -d
@@ -47,3 +52,7 @@ services:
 
 volumes:
   docker-manager-data:
+
+# networks:
+#   backup:
+#     external: true      # la rete condivisa con ZeroByte
