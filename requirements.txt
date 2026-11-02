@@ -6,4 +6,4 @@ SQLAlchemy==2.1.5
 pydantic==2.14.1
 itsdangerous==2.2.0
 croniter==6.2.4
-tzdata==2026.5
+tzdata==2026.6
