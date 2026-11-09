@@ -6,8 +6,8 @@
 FROM debian:bookworm-slim AS dockercli
 
 ARG TARGETARCH
-ARG DOCKER_CLI_VERSION=29.9.1
-ARG COMPOSE_VERSION=v5.6.0
+ARG DOCKER_CLI_VERSION=29.9.3
+ARG COMPOSE_VERSION=v5.7.0
 
 RUN set -eux; \
     apt-get update; \
